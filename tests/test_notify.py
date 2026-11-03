@@ -286,6 +286,28 @@ class FormatTest(unittest.TestCase):
         self.assertIn("alice", text)
         self.assertIn("https://github.com/a/b/releases/tag/v1.2.3", text)
 
+    def test_issue_pr_body_hidden_by_default(self) -> None:
+        cfg = config_mod.GithubSubConfig()
+        self.assertFalse(cfg.template.show_issue_body)
+        for kind in ("issue", "pr"):
+            with self.subTest(kind=kind):
+                event = models_mod.Event(
+                    kind=kind, repo="a/b", title=f"#{kind} title", body="hidden body", url="u",
+                )
+                text = models_mod.format_event(event, config=cfg)
+                self.assertIn(f"#{kind} title", text)
+                self.assertNotIn("hidden body", text)
+
+    def test_issue_pr_body_shown_when_enabled(self) -> None:
+        cfg = config_mod.GithubSubConfig(template=dict(show_issue_body=True))
+        for kind in ("issue", "pr"):
+            with self.subTest(kind=kind):
+                event = models_mod.Event(
+                    kind=kind, repo="a/b", title=f"#{kind} title", body="visible body", url="u",
+                )
+                text = models_mod.format_event(event, config=cfg)
+                self.assertIn("visible body", text)
+
     def test_truncate_body(self) -> None:
         cfg = config_mod.GithubSubConfig(filters=dict(max_text_length=80))
         event = models_mod.Event(kind="commit", repo="a/b", title="t", body="x" * 500, url="u")

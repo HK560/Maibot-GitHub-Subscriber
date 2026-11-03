@@ -643,9 +643,12 @@ class TemplateSection(PluginConfigBase):
         json_schema_extra={"label": "显示提交信息"},
     )
     show_issue_body: bool = Field(
-        default=True,
-        description="Issue/PR 通知中是否展示正文摘要",
-        json_schema_extra={"label": "显示 Issue/PR 摘要"},
+        default=False,
+        description="Issue/PR 通知中是否展示正文摘要；默认关闭，只显示标题",
+        json_schema_extra={
+            "label": "显示 Issue/PR 内容摘要",
+            "hint": "默认关闭，通知只显示标题。开启后会附带 Issue/PR 正文摘要，并按“正文最大长度”截断。",
+        },
     )
     show_author: bool = Field(
         default=True,

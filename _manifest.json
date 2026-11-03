@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "id": "github.hk560.github-subscriber",
   "name": "MaiBot GitHub Subscriber",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "订阅多个 GitHub 仓库的提交、Release、Issues、Pull Request 与标签变化，按分支和作者筛选后推送到手动填写的群聊或私聊；每个仓库可单独指定通知目标或继承全局配置。",
   "author": {
     "name": "HK560",

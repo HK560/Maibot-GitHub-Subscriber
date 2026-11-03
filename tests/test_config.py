@@ -31,6 +31,7 @@ class ConfigModelTest(unittest.TestCase):
         self.assertFalse(cfg.subscriptions.repos[0].use_custom_targets)
         self.assertEqual(cfg.subscriptions.repos[0].group_targets, [])
         self.assertEqual(cfg.subscriptions.repos[0].private_targets, [])
+        self.assertFalse(cfg.template.show_issue_body)
 
     def test_repo_normalization(self) -> None:
         Repo = config_mod.RepoSubscription

@@ -1,6 +1,6 @@
 [project]
 name = "maibot-github-subscriber"
-version = "1.2.0"
+version = "1.2.1"
 description = "Subscribe to GitHub repositories and push commit, release, issue and PR notifications to MaiBot chats"
 readme = "README.md"
 requires-python = ">=3.10"

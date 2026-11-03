@@ -106,7 +106,7 @@ def format_event(event: Event, *, config: Any) -> str:
     if event.kind == "commit":
         show_body = bool(getattr(template, "show_commit_body", True))
     elif event.kind in {"issue", "pr"}:
-        show_body = bool(getattr(template, "show_issue_body", True))
+        show_body = bool(getattr(template, "show_issue_body", False))
     if show_body and event.body:
         lines.append(_truncate(event.body, max_len))
 
