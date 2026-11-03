@@ -83,7 +83,7 @@ class SubscriptionEngine:
         if self._task is not None and not self._task.done():
             return
         self._stop_event.clear()
-        self._task = asyncio.create_task(self._run_loop(), name="github-sub-engine")
+        self._task = asyncio.create_task(self._run_loop(), name="github-subscriber-engine")
         logger.info("GitHub 订阅引擎已启动")
 
     async def stop(self) -> None:
@@ -247,7 +247,7 @@ class SubscriptionEngine:
         if repo_cfg is None:
             return
 
-        current_dests = set(self.notifier.destinations(current_cfg))
+        current_dests = set(self.notifier.destinations(current_cfg, repo_cfg))
         current_platform = str(getattr(current_cfg.notify, "platform", "qq") or "qq")
         terminal_statuses = {"delivered", "terminal", "unknown", "skipped"}
 
@@ -301,21 +301,13 @@ class SubscriptionEngine:
                 receipt["last_attempt"] = time.time()
                 self.state.save()
 
-                # 构造单目标配置副本
-                if kind == "group":
-                    single_notify = current_cfg.notify.model_copy(update={
-                        "group_targets": [target_id],
-                        "private_targets": [],
-                    })
-                else:
-                    single_notify = current_cfg.notify.model_copy(update={
-                        "group_targets": [],
-                        "private_targets": [target_id],
-                    })
-                single_cfg = current_cfg.model_copy(update={"notify": single_notify})
-
                 try:
-                    res = await self.notifier.send_events(events, single_cfg)
+                    res = await self.notifier.send_events(
+                        events,
+                        current_cfg,
+                        repo=repo_cfg,
+                        targets=[dest_pair],
+                    )
                     sent = int(res.get("sent", 0))
                     unknown = int(res.get("unknown", 0))
                     skipped = int(res.get("skipped", 0))
@@ -600,7 +592,7 @@ class SubscriptionEngine:
 
         # 写入 Outbox（如果有待发送事件且配置了目标，无目标时直接丢弃避免积压）
         if (not baseline or notify_first) and collected:
-            dests = self.notifier.destinations(cfg) if self.notifier is not None else []
+            dests = self.notifier.destinations(cfg, repo_cfg) if self.notifier is not None else []
             if dests:
                 platform = str(getattr(cfg.notify, "platform", "qq") or "qq")
                 self.state.add_to_outbox(repo, collected, dests, platform=platform)

@@ -94,6 +94,17 @@ class PluginCommandTest(unittest.TestCase):
         text = asyncio.run(pl._status_text(pl.config))
         self.assertIn("订阅仓库：2 个", text)
 
+    def test_status_text_reports_repo_custom_targets(self) -> None:
+        pl = build_plugin(
+            notify=dict(group_targets=["123456789"]),
+            subscriptions=dict(repos=[
+                dict(repo="a/b", use_custom_targets=True, group_targets=["222222222"]),
+            ]),
+        )
+        text = asyncio.run(pl._status_text(pl.config))
+        self.assertIn("通知目标：群 2 个 / 私聊 0 个", text)
+        self.assertIn("仓库级目标：a/b 单独配置", text)
+
     def test_local_operator_bypasses_auth(self) -> None:
         pl = build_plugin()
         ok, reply, _ = asyncio.run(
@@ -125,6 +136,9 @@ class WidgetTest(unittest.IsolatedAsyncioTestCase):
         pl = build_plugin(notify={"group_targets": ["123456789", "987654321"]})
         pl._engine = object()
         pl._notifier = type("Notifier", (), {})()
+        pl._notifier.all_destinations = lambda cfg: [
+            ("group", "123456789"), ("group", "987654321"),
+        ]
         pl._notifier.send_text = AsyncMock(return_value={"targets":2, "sent":2, "failed":0})
         widget = next(w for w in pl.config_widgets if w.id == "send_test")
         self.assertEqual(widget.label, "立即发送测试通知")
@@ -132,6 +146,10 @@ class WidgetTest(unittest.IsolatedAsyncioTestCase):
         await pl._action_task
         pl._notifier.send_text.assert_awaited_once()
         self.assertEqual(pl._notifier.send_text.await_args.args[1].notify.group_targets, ["123456789", "987654321"])
+        self.assertEqual(
+            pl._notifier.send_text.await_args.kwargs["targets"],
+            [("group", "123456789"), ("group", "987654321")],
+        )
         self.assertIn("成功 2", pl._action_text)
 
     async def test_test_button_reports_empty_targets(self):
@@ -139,6 +157,7 @@ class WidgetTest(unittest.IsolatedAsyncioTestCase):
         pl = build_plugin()
         pl._engine = object()
         pl._notifier = type("Notifier", (), {})()
+        pl._notifier.all_destinations = lambda cfg: []
         pl._notifier.send_text = AsyncMock(return_value={"targets":0, "sent":0, "failed":0})
         await pl.on_config_widget_action("send_test")
         await pl._action_task
@@ -156,6 +175,9 @@ class WidgetTest(unittest.IsolatedAsyncioTestCase):
         )
         pl._engine = object()
         pl._notifier = type("Notifier", (), {})()
+        pl._notifier.all_destinations = lambda cfg: [
+            ("group", "123456789"), ("private", "12345678"),
+        ]
         pl._notifier.send_text = AsyncMock(
             return_value={"targets": 2, "sent": 2, "failed": 0, "skipped": 0, "unknown": 0}
         )
@@ -167,6 +189,17 @@ class WidgetTest(unittest.IsolatedAsyncioTestCase):
         for expected in ("a/b", "分支：dev", "作者：alice", "Tag", "核心仓库", "群聊 1 个"):
             self.assertIn(expected, text)
         self.assertIn("成功 2", pl._action_text)
+
+    async def test_summary_shows_repo_custom_targets(self):
+        pl = build_plugin(
+            notify={"group_targets": ["123456789"]},
+            subscriptions={"repos": [dict(
+                repo="a/b", use_custom_targets=True, group_targets=["222222222"],
+            )]},
+        )
+        text = pl._subscription_summary(pl.config)
+        self.assertIn("通知：单独配置（群聊 1 个 / 私聊 0 个）", text)
+        self.assertIn("群聊 2 个", text)
 
     async def test_summary_handles_no_repositories(self):
         pl = build_plugin(subscriptions={"repos": []})

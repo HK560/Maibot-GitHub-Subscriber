@@ -32,11 +32,14 @@ class FakeChat:
     async def get_group_streams(self, platform: str = "qq"):
         return [
             {"group_id": "123456789", "session_id": "g-1", "chat_type": "group", "account_id": "1"},
+            {"group_id": "987654321", "session_id": "g-2", "chat_type": "group", "account_id": "1"},
+            {"group_id": "222222222", "session_id": "g-3", "chat_type": "group", "account_id": "1"},
         ]
 
     async def get_private_streams(self, platform: str = "qq"):
         return [
             {"user_id": "11111111", "session_id": "p-1", "chat_type": "private", "account_id": "1"},
+            {"user_id": "22222222", "session_id": "p-2", "chat_type": "private", "account_id": "1"},
         ]
 
     async def open_session(self, **kwargs: Any):
@@ -80,6 +83,84 @@ class NotifyTest(unittest.TestCase):
         cfg = make_config(group_targets=[], private_targets=[])
         notifier = notify_mod.Notifier(ctx, lambda: cfg)
         self.assertEqual(notifier.destinations(cfg), [])
+
+    def test_repo_custom_targets_override_global(self) -> None:
+        ctx = FakeCtx()
+        cfg = config_mod.GithubSubConfig(
+            notify=dict(group_targets=["123456789"], private_targets=["11111111"]),
+            subscriptions={"repos": [
+                dict(repo="a/b"),
+                dict(repo="c/d", use_custom_targets=True,
+                     group_targets=["987654321"], private_targets=["22222222"]),
+                dict(repo="e/f", use_custom_targets=True),
+            ]},
+        )
+        notifier = notify_mod.Notifier(ctx, lambda: cfg)
+        inherit_repo, custom_repo, empty_repo = cfg.subscriptions.repos
+        self.assertEqual(
+            notifier.destinations(cfg, inherit_repo),
+            [("group", "123456789"), ("private", "11111111")],
+        )
+        self.assertEqual(
+            notifier.destinations(cfg, custom_repo),
+            [("group", "987654321"), ("private", "22222222")],
+        )
+        self.assertEqual(notifier.destinations(cfg, empty_repo), [])
+        # 不传仓库时仍是全局目标
+        self.assertEqual(
+            notifier.destinations(cfg),
+            [("group", "123456789"), ("private", "11111111")],
+        )
+
+    def test_all_destinations_dedupes_global_and_repo_targets(self) -> None:
+        ctx = FakeCtx()
+        cfg = config_mod.GithubSubConfig(
+            notify=dict(group_targets=["123456789"], private_targets=["11111111"]),
+            subscriptions={"repos": [
+                dict(repo="a/b"),
+                dict(repo="c/d", use_custom_targets=True,
+                     group_targets=["123456789", "987654321"], private_targets=["22222222"]),
+                dict(repo="e/f", use_custom_targets=True),
+            ]},
+        )
+        notifier = notify_mod.Notifier(ctx, lambda: cfg)
+        self.assertEqual(notifier.all_destinations(cfg), [
+            ("group", "123456789"),
+            ("group", "987654321"),
+            ("private", "11111111"),
+            ("private", "22222222"),
+        ])
+
+    def test_send_events_to_repo_custom_targets(self) -> None:
+        ctx = FakeCtx()
+        cfg = config_mod.GithubSubConfig(
+            notify=dict(group_targets=["123456789"], private_targets=["11111111"]),
+            subscriptions={"repos": [
+                dict(repo="a/b", use_custom_targets=True,
+                     group_targets=["987654321"], private_targets=["22222222"]),
+            ]},
+        )
+        repo = cfg.subscriptions.repos[0]
+        notifier = notify_mod.Notifier(ctx, lambda: cfg)
+        events = [models_mod.Event(kind="commit", repo="a/b", title="fix", url="https://x")]
+        stats = asyncio.run(notifier.send_events(events, cfg, repo=repo))
+        self.assertEqual(stats["targets"], 2)
+        self.assertEqual(stats["sent"], 2)
+        self.assertEqual({call["stream_id"] for call in ctx.send.calls}, {"g-2", "p-2"})
+
+    def test_send_events_to_custom_empty_repo_sends_nothing(self) -> None:
+        ctx = FakeCtx()
+        cfg = config_mod.GithubSubConfig(
+            notify=dict(group_targets=["123456789"]),
+            subscriptions={"repos": [dict(repo="a/b", use_custom_targets=True)]},
+        )
+        repo = cfg.subscriptions.repos[0]
+        notifier = notify_mod.Notifier(ctx, lambda: cfg)
+        events = [models_mod.Event(kind="commit", repo="a/b", title="fix", url="https://x")]
+        stats = asyncio.run(notifier.send_events(events, cfg, repo=repo))
+        self.assertEqual(stats["targets"], 0)
+        self.assertEqual(stats["sent"], 0)
+        self.assertEqual(ctx.send.calls, [])
 
     def test_send_events_to_targets(self) -> None:
         ctx = FakeCtx()
@@ -142,6 +223,26 @@ class DeliverySafetyTest(unittest.IsolatedAsyncioTestCase):
         ctx.chat.get_group_streams = changed
         notifier = notify_mod.Notifier(ctx, lambda: cfg)
         stats = await notifier.send_text("test", cfg)
+        self.assertEqual(stats["skipped"], 1)
+        self.assertEqual(ctx.send.calls, [])
+
+    async def test_hot_removal_of_repo_target_blocks_send(self):
+        ctx = FakeCtx()
+        cfg = config_mod.GithubSubConfig(
+            notify=dict(group_targets=["123456789"]),
+            subscriptions={"repos": [
+                dict(repo="a/b", use_custom_targets=True, group_targets=["987654321"]),
+            ]},
+        )
+        repo = cfg.subscriptions.repos[0]
+        original = ctx.chat.get_group_streams
+        async def changed(platform="qq"):
+            repo.group_targets = []
+            return await original(platform)
+        ctx.chat.get_group_streams = changed
+        notifier = notify_mod.Notifier(ctx, lambda: cfg)
+        events = [models_mod.Event(kind="commit", repo="a/b", title="fix", url="https://x")]
+        stats = await notifier.send_events(events, cfg, repo=repo)
         self.assertEqual(stats["skipped"], 1)
         self.assertEqual(ctx.send.calls, [])
 

@@ -1,9 +1,9 @@
-# GitHub 仓库订阅通知插件配置
+# MaiBot GitHub Subscriber 配置
 # 参考示例；复制为本地 config.toml 才会生效，也可直接使用 WebUI 自动生成的配置。
 
 [plugin]
 enabled = true
-config_version = "1.1.0"
+config_version = "1.2.0"
 # 可使用管理命令的账号；QQ 号可直接填写，保存时自动补全 qq:
 admin_users = []
 timezone = "Asia/Shanghai"
@@ -32,6 +32,11 @@ issue_state = "all"
 notify_issue_close = true
 notify_pr_merge = true
 ignore_keywords = []
+# 通知目标：默认关闭，继承全局 [notify] 的群聊/私聊
+use_custom_targets = false
+# 开启上面一项后，只向这里填写的目标发送；留空表示该类别不发送（不会回退全局）
+group_targets = []
+private_targets = []
 note = "麦麦主程序仓库（示例，可按需删除或修改）"
 
 [notify]
@@ -68,7 +73,7 @@ show_issue_body = true
 show_author = true
 show_repo_full_name = true
 use_emoji = true
-footer_text = "— MaiBot GitHub 订阅"
+footer_text = "— MaiBot GitHub Subscriber"
 
 [advanced]
 log_level = "INFO"

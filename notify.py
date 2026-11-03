@@ -1,4 +1,4 @@
-"""通知目标解析与投递；目标完全由用户手动配置，发送前重新读取配置。"""
+"""通知目标解析与投递；支持仓库级覆盖，发送前重新读取配置。"""
 
 from __future__ import annotations
 
@@ -16,10 +16,24 @@ class Notifier:
         self.ctx = ctx
         self.get_config = get_config
 
-    def destinations(self, config: Any) -> List[Tuple[str, str]]:
-        notify = config.notify
-        return [("group", target) for target in notify.group_targets] + [
-            ("private", target) for target in notify.private_targets
+    def destinations(self, config: Any, repo: Any = None) -> List[Tuple[str, str]]:
+        """返回某个仓库实际生效的目标；不传仓库时使用全局通知目标。"""
+
+        if repo is None:
+            groups = config.notify.group_targets
+            privates = config.notify.private_targets
+        else:
+            groups, privates = config.notify_targets_for(repo)
+        return [("group", target) for target in groups] + [
+            ("private", target) for target in privates
+        ]
+
+    def all_destinations(self, config: Any) -> List[Tuple[str, str]]:
+        """返回全局与所有已启用仓库目标的去重合集，供测试/摘要消息使用。"""
+
+        groups, privates = config.all_notify_targets()
+        return [("group", target) for target in groups] + [
+            ("private", target) for target in privates
         ]
 
     async def resolve(self, platform: str, kind: str, target_id: str, *, force: bool = False) -> Optional[str]:
@@ -64,18 +78,52 @@ class Notifier:
         result = await asyncio.wait_for(self.ctx.send.forward(nodes, stream_id, return_details=True), timeout=25)
         return self._sent(result)
 
-    def _still_allowed(self, config: Any, kind: str, target: str) -> bool:
-        current = self.get_config()
-        return current.plugin.enabled and current.notify.platform == config.notify.platform and (
-            kind, target
-        ) in self.destinations(current)
+    @staticmethod
+    def _find_repo(config: Any, repo: Any) -> Any:
+        name = str(getattr(repo, "repo", "") or "")
+        return next(
+            (candidate for candidate in config.subscriptions.repos if candidate.repo == name),
+            None,
+        )
 
-    async def _deliver(self, config: Any, text: str, nodes: Optional[List[Dict[str, Any]]] = None) -> Dict[str, int]:
+    def _still_allowed(
+        self,
+        config: Any,
+        kind: str,
+        target: str,
+        repo: Any = None,
+        *,
+        any_repo: bool = False,
+    ) -> bool:
+        current = self.get_config()
+        if not current.plugin.enabled or current.notify.platform != config.notify.platform:
+            return False
+        if repo is not None:
+            current_repo = self._find_repo(current, repo)
+            if current_repo is None or not current_repo.enabled:
+                return False
+            return (kind, target) in self.destinations(current, current_repo)
+        if any_repo:
+            return (kind, target) in self.all_destinations(current)
+        return (kind, target) in self.destinations(current)
+
+    async def _deliver(
+        self,
+        config: Any,
+        text: str,
+        nodes: Optional[List[Dict[str, Any]]] = None,
+        *,
+        repo: Any = None,
+        targets: Optional[List[Tuple[str, str]]] = None,
+    ) -> Dict[str, int]:
         stats = {"sent": 0, "failed": 0, "unknown": 0, "skipped": 0, "targets": 0}
-        destinations = self.destinations(config)
+        destinations = list(targets) if targets is not None else self.destinations(config, repo)
+        # 显式传入 targets（测试/摘要广播或 Outbox 单目标投递）时，热更新校验范围不同：
+        # 仓库出件按该仓库的当前目标校验，跨仓库广播按全体目标校验。
+        any_repo = targets is not None and repo is None
         stats["targets"] = len(destinations)
         for kind, target in destinations:
-            if not self._still_allowed(config, kind, target):
+            if not self._still_allowed(config, kind, target, repo, any_repo=any_repo):
                 stats["skipped"] += 1
                 continue
             current = self.get_config()
@@ -88,14 +136,17 @@ class Notifier:
                 stats["failed"] += 1
                 continue
             # 查会话会等待 RPC，期间目标或总开关可能热更新。
-            if not self._still_allowed(config, kind, target) or self.get_config().advanced.dry_run:
+            if (
+                not self._still_allowed(config, kind, target, repo, any_repo=any_repo)
+                or self.get_config().advanced.dry_run
+            ):
                 stats["skipped"] += 1
                 continue
             try:
                 if nodes:
                     sent = await self._send_forward(nodes, stream_id)
                     # 只有明确返回失败才退回文本；超时/异常结果未知不重发。
-                    if not sent and self._still_allowed(config, kind, target):
+                    if not sent and self._still_allowed(config, kind, target, repo, any_repo=any_repo):
                         sent = await self._send_text(text, stream_id)
                 else:
                     sent = await self._send_text(text, stream_id)
@@ -105,10 +156,24 @@ class Notifier:
                 logger.warning("通知发送结果未知，避免重复发送，不自动重试：%s %s", kind, target, exc_info=True)
         return stats
 
-    async def send_events(self, events: List[Event], config: Any) -> Dict[str, int]:
+    async def send_events(
+        self,
+        events: List[Event],
+        config: Any,
+        *,
+        repo: Any = None,
+        targets: Optional[List[Tuple[str, str]]] = None,
+    ) -> Dict[str, int]:
         text = "\n\n".join(format_event(event, config=config) for event in events)
         nodes = [event_forward_node(event, config=config) for event in events] if config.notify.send_as_forward and len(events) > 1 else None
-        return await self._deliver(config, text, nodes) if events else {"sent": 0, "failed": 0, "targets": 0}
+        return await self._deliver(config, text, nodes, repo=repo, targets=targets) if events else {"sent": 0, "failed": 0, "targets": 0}
 
-    async def send_text(self, text: str, config: Any) -> Dict[str, int]:
-        return await self._deliver(config, text)
+    async def send_text(
+        self,
+        text: str,
+        config: Any,
+        *,
+        repo: Any = None,
+        targets: Optional[List[Tuple[str, str]]] = None,
+    ) -> Dict[str, int]:
+        return await self._deliver(config, text, repo=repo, targets=targets)

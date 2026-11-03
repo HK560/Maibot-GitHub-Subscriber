@@ -95,13 +95,24 @@ class RecordingNotifier:
         self.behaviors = target_behaviors or {}
         self.calls: List[Dict[str, Any]] = []
 
-    def destinations(self, config: Any) -> List[Tuple[str, str]]:
-        return [("group", g) for g in config.notify.group_targets] + [
-            ("private", p) for p in config.notify.private_targets
+    def destinations(self, config: Any, repo: Any = None) -> List[Tuple[str, str]]:
+        if repo is None:
+            groups, privates = config.notify.group_targets, config.notify.private_targets
+        else:
+            groups, privates = config.notify_targets_for(repo)
+        return [("group", g) for g in groups] + [
+            ("private", p) for p in privates
         ]
 
-    async def send_events(self, events: List[Any], config: Any) -> Dict[str, int]:
-        dests = self.destinations(config)
+    async def send_events(
+        self,
+        events: List[Any],
+        config: Any,
+        *,
+        repo: Any = None,
+        targets: Optional[List[Tuple[str, str]]] = None,
+    ) -> Dict[str, int]:
+        dests = list(targets) if targets is not None else self.destinations(config, repo)
         self.calls.append({"dests": dests, "event_keys": [e.key for e in events]})
         if not dests:
             return {"sent": 0, "failed": 0, "unknown": 0, "skipped": 1, "targets": 0}
@@ -316,6 +327,142 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(state.get("outbox", []), [])
         # But progress advances
         self.assertIn("c2", self.state.known_commits(state, "main"))
+
+    def test_repo_custom_targets_used_for_outbox(self) -> None:
+        notifier = RecordingNotifier()
+        eng, cfg, repo = self._make(
+            notifier,
+            use_custom_targets=True,
+            group_targets=["222222222"],
+            private_targets=[],
+        )
+        async def mock_get_client(c):
+            return self.client
+        eng._get_client = mock_get_client
+
+        self.client.commits["main"] = [commit("c1")]
+        asyncio.run(eng.poll_all())
+        self.client.commits["main"] = [commit("c2"), commit("c1")]
+        asyncio.run(eng.poll_all())
+
+        self.assertEqual(notifier.calls, [{
+            "dests": [("group", "222222222")],
+            "event_keys": ["c2"],
+        }])
+        state = self.state.repo_state("a/b")
+        self.assertEqual(state.get("outbox", []), [])
+        self.assertEqual(
+            list(state["history"][0]["receipts"]),
+            ["group:222222222"],
+        )
+
+    def test_repo_inherits_global_targets_for_outbox(self) -> None:
+        notifier = RecordingNotifier()
+        eng, cfg, repo = self._make(notifier)
+        async def mock_get_client(c):
+            return self.client
+        eng._get_client = mock_get_client
+
+        self.client.commits["main"] = [commit("c1")]
+        asyncio.run(eng.poll_all())
+        self.client.commits["main"] = [commit("c2"), commit("c1")]
+        asyncio.run(eng.poll_all())
+
+        state = self.state.repo_state("a/b")
+        delivered = {dest for call in notifier.calls for dest in call["dests"]}
+        self.assertEqual(delivered, {
+            ("group", "123456789"),
+            ("private", "11111111"),
+        })
+        self.assertEqual(
+            set(state["history"][0]["receipts"]),
+            {"group:123456789", "private:11111111"},
+        )
+
+    def test_multiple_repos_use_their_own_targets(self) -> None:
+        notifier = RecordingNotifier()
+        repo_a = config_mod.RepoSubscription(
+            repo="a/b", branches=["main"], use_custom_targets=True,
+            group_targets=["222222222"], private_targets=[],
+        )
+        repo_c = config_mod.RepoSubscription(repo="c/d", branches=["main"])
+        cfg = config_mod.GithubSubConfig(
+            subscriptions={"repos": [repo_a, repo_c]},
+            notify={"group_targets": ["123456789"], "private_targets": ["11111111"]},
+        )
+        eng = engine_mod.SubscriptionEngine(None, lambda: cfg, self.state, notifier)
+        async def mock_get_client(c):
+            return self.client
+        eng._get_client = mock_get_client
+
+        self.client.commits["main"] = [commit("c1")]
+        asyncio.run(eng.poll_all())
+        self.client.commits["main"] = [commit("c2"), commit("c1")]
+        asyncio.run(eng.poll_all())
+
+        state_a = self.state.repo_state("a/b")
+        state_c = self.state.repo_state("c/d")
+        self.assertEqual(list(state_a["history"][0]["receipts"]), ["group:222222222"])
+        self.assertEqual(
+            set(state_c["history"][0]["receipts"]),
+            {"group:123456789", "private:11111111"},
+        )
+
+    def test_custom_repo_does_not_fall_back_to_global_for_old_outbox(self) -> None:
+        notifier = RecordingNotifier()
+        eng, cfg, repo = self._make(
+            notifier,
+            use_custom_targets=True,
+            group_targets=["222222222"],
+            private_targets=[],
+        )
+        async def mock_get_client(c):
+            return self.client
+        eng._get_client = mock_get_client
+
+        state = self.state.repo_state("a/b")
+        state["initialized"] = True
+        # 这条回执来自切换配置前的全局目标，现在不属于该仓库的单独目标
+        self.state.add_to_outbox(
+            "a/b",
+            [models_mod.Event(kind="commit", repo="a/b", title="t", url="u", key="c0")],
+            [("group", "123456789")],
+        )
+        self.state.save()
+
+        stats = asyncio.run(eng.poll_all())
+        self.assertEqual(stats["skipped"], 1)
+        self.assertEqual(stats["sent"], 0)
+        self.assertEqual(state.get("outbox", []), [])
+
+    def test_custom_repo_target_survives_global_target_change(self) -> None:
+        notifier = RecordingNotifier()
+        eng, cfg, repo = self._make(
+            notifier,
+            use_custom_targets=True,
+            group_targets=["222222222"],
+            private_targets=[],
+        )
+        async def mock_get_client(c):
+            return self.client
+        eng._get_client = mock_get_client
+
+        state = self.state.repo_state("a/b")
+        state["initialized"] = True
+        self.state.add_to_outbox(
+            "a/b",
+            [models_mod.Event(kind="commit", repo="a/b", title="t", url="u", key="c0")],
+            [("group", "222222222")],
+        )
+        self.state.save()
+
+        # 全局目标清空不影响仓库级目标
+        cfg.notify.group_targets = []
+        cfg.notify.private_targets = []
+        stats = asyncio.run(eng.poll_all())
+        self.assertEqual(stats["sent"], 1)
+        self.assertEqual(notifier.calls[0]["dests"], [("group", "222222222")])
+        self.assertEqual(state.get("outbox", []), [])
 
     def test_global_event_time_sort_and_cap(self) -> None:
         notifier = RecordingNotifier()

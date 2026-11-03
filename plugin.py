@@ -1,4 +1,4 @@
-"""MaiBot SDK v2 入口：GitHub 仓库订阅通知插件。"""
+"""MaiBot SDK v2 入口：MaiBot GitHub Subscriber 插件。"""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ HELP_TEXT = (
 
 
 class GithubSubPlugin(MaiBotPlugin):
-    """GitHub 仓库订阅通知插件主类。"""
+    """MaiBot GitHub Subscriber 插件主类。"""
 
     config_model = GithubSubConfig
 
@@ -71,11 +71,13 @@ class GithubSubPlugin(MaiBotPlugin):
         self._engine = SubscriptionEngine(self.ctx, lambda: self.config, self._state, self._notifier)
         await self._engine.start()
         repos = [r.repo for r in cfg.subscriptions.repos if r.enabled and r.repo]
+        group_targets, private_targets = cfg.all_notify_targets()
         logger.info(
-            "GitHub 订阅插件已加载：订阅仓库 %d 个，通知群 %d 个，通知私聊 %d 个",
+            "GitHub 订阅插件已加载：订阅仓库 %d 个，通知群 %d 个，通知私聊 %d 个，单独配置 %d 个仓库",
             len(repos),
-            len(cfg.notify.group_targets),
-            len(cfg.notify.private_targets),
+            len(group_targets),
+            len(private_targets),
+            len(cfg.custom_target_repos()),
         )
 
     async def on_unload(self) -> None:
@@ -131,10 +133,13 @@ class GithubSubPlugin(MaiBotPlugin):
         last_run_text = (
             datetime.fromtimestamp(last_run).strftime("%Y-%m-%d %H:%M:%S") if last_run else "尚未轮询"
         )
+        group_targets, private_targets = cfg.all_notify_targets()
+        custom_repos = len(cfg.custom_target_repos())
+        custom_label = f"｜{custom_repos} 个仓库单独配置" if custom_repos else ""
         states["status"] = ConfigWidgetState(
             text=(
                 f"{run_text}｜订阅仓库 {len(repos)} 个｜间隔 {cfg.polling.interval_seconds}s\n"
-                f"通知群 {len(cfg.notify.group_targets)} / 私聊 {len(cfg.notify.private_targets)}｜最近轮询 {last_run_text}"
+                f"通知群 {len(group_targets)} / 私聊 {len(private_targets)}{custom_label}｜最近轮询 {last_run_text}"
             ),
             tone=run_tone,
         )
@@ -174,10 +179,18 @@ class GithubSubPlugin(MaiBotPlugin):
                 self._action_text = self._summarize_stats(stats)
                 self._action_tone = "warning" if stats.get("errors") else "success"
             elif action_id == "send_summary":
-                stats = await self._notifier.send_text(self._subscription_summary(self.config), self.config)
+                stats = await self._notifier.send_text(
+                    self._subscription_summary(self.config),
+                    self.config,
+                    targets=self._notifier.all_destinations(self.config),
+                )
                 self._action_text, self._action_tone = self._describe_delivery("订阅信息", stats)
             else:
-                stats = await self._notifier.send_text("🔔 GitHub 订阅测试消息\n如果你收到这条消息，说明通知目标配置正确。", self.config)
+                stats = await self._notifier.send_text(
+                    "🔔 GitHub 订阅测试消息\n如果你收到这条消息，说明通知目标配置正确。",
+                    self.config,
+                    targets=self._notifier.all_destinations(self.config),
+                )
                 self._action_text, self._action_tone = self._describe_delivery("测试消息", stats)
         except Exception as exc:
             self._action_text, self._action_tone = f"操作失败：{type(exc).__name__}", "error"
@@ -201,7 +214,7 @@ class GithubSubPlugin(MaiBotPlugin):
 
     @Command(
         "githubsub",
-        description="GitHub 仓库订阅通知管理命令",
+        description="MaiBot GitHub Subscriber 管理命令",
         pattern=COMMAND_PATTERN,
     )
     async def handle_command(
@@ -251,7 +264,9 @@ class GithubSubPlugin(MaiBotPlugin):
                     reply = "管理员已在配置中关闭测试命令。"
                 else:
                     stats = await self._notifier.send_text(
-                        "🔔 GitHub 订阅测试消息\n如果你收到这条消息，说明通知目标配置正确。", cfg
+                        "🔔 GitHub 订阅测试消息\n如果你收到这条消息，说明通知目标配置正确。",
+                        cfg,
+                        targets=self._notifier.all_destinations(cfg),
                     )
                     reply = f"测试消息已发送：成功 {stats['sent']}，失败 {stats['failed']}，目标 {stats['targets']}。"
             elif action == "pause":
@@ -274,7 +289,7 @@ class GithubSubPlugin(MaiBotPlugin):
     # ------------------------------------------------------------------ LLM 工具
     @Tool(
         "github_sub_status",
-        description="查询 GitHub 仓库订阅通知插件的运行状态与订阅列表",
+        description="查询 MaiBot GitHub Subscriber 插件的运行状态与订阅列表",
         brief_description="查询 GitHub 订阅插件状态",
     )
     async def tool_status(self, **kwargs: Any) -> Dict[str, Any]:
@@ -300,13 +315,21 @@ class GithubSubPlugin(MaiBotPlugin):
             state_label = "已暂停"
         else:
             state_label = "运行中"
+        group_targets, private_targets = cfg.all_notify_targets()
+        custom_repos = cfg.custom_target_repos()
         lines = [
             "📡 GitHub 订阅状态",
             f"状态：{state_label}",
             f"订阅仓库：{len(repos)} 个",
             f"轮询间隔：{cfg.polling.interval_seconds} 秒",
-            f"通知目标：群 {len(cfg.notify.group_targets)} 个 / 私聊 {len(cfg.notify.private_targets)} 个",
+            f"通知目标：群 {len(group_targets)} 个 / 私聊 {len(private_targets)} 个",
         ]
+        if custom_repos:
+            names = "、".join(repo.repo for repo in custom_repos[:5])
+            if len(custom_repos) > 5:
+                lines.append(f"仓库级目标：{names} 等 {len(custom_repos)} 个仓库单独配置")
+            else:
+                lines.append(f"仓库级目标：{names} 单独配置")
         if self._engine is not None and self._engine.last_run:
             lines.append(
                 "最近轮询：" + datetime.fromtimestamp(self._engine.last_run).strftime("%Y-%m-%d %H:%M:%S")
@@ -327,7 +350,7 @@ class GithubSubPlugin(MaiBotPlugin):
     @staticmethod
     def _describe_delivery(label: str, stats: Dict[str, int]) -> Tuple[str, str]:
         if not stats["targets"]:
-            return "未发送：没有填写通知群聊或通知私聊，请先填写并保存，再点击按钮。", "warning"
+            return "未发送：没有填写通知群聊或通知私聊（全局或仓库级目标），请先填写并保存，再点击按钮。", "warning"
         text = (
             f"{label}发送结果：目标 {stats['targets']}，成功 {stats['sent']}，失败 {stats['failed']}，"
             f"跳过 {stats.get('skipped', 0)}，结果未知 {stats.get('unknown', 0)}"
@@ -359,12 +382,21 @@ class GithubSubPlugin(MaiBotPlugin):
                 events.append("Tag")
             block = [f"{idx}. {repo.repo}", f"   分支：{branches}", f"   作者：{authors}",
                      f"   事件：{'/'.join(events) or '无'}"]
+            if repo.use_custom_targets:
+                block.append(
+                    f"   通知：单独配置（群聊 {len(repo.group_targets)} 个 / 私聊 {len(repo.private_targets)} 个）"
+                )
+            else:
+                block.append("   通知：继承全局目标")
             if repo.note:
                 block.append(f"   备注：{repo.note}")
             lines.append("\n".join(block))
         if len(repos) > 20:
             lines.append(f"……另有 {len(repos) - 20} 个仓库未展开")
-        lines.append(f"通知目标：群聊 {len(cfg.notify.group_targets)} 个 / 私聊 {len(cfg.notify.private_targets)} 个")
+        group_targets, private_targets = cfg.all_notify_targets()
+        lines.append(
+            f"通知目标：群聊 {len(group_targets)} 个 / 私聊 {len(private_targets)} 个（全局 + 仓库级去重）"
+        )
         lines.append(f"轮询间隔：{cfg.polling.interval_seconds} 秒")
         return "\n".join(lines)
 
@@ -389,8 +421,13 @@ class GithubSubPlugin(MaiBotPlugin):
                 events.append("PR")
             if repo.watch_tags:
                 events.append("Tag")
+            targets_label = (
+                f"单独（群 {len(repo.group_targets)} / 私聊 {len(repo.private_targets)}）"
+                if repo.use_custom_targets
+                else "继承全局"
+            )
             lines.append(
-                f"{idx}. {repo.repo}｜分支：{branches}｜作者：{authors}｜事件：{'/'.join(events) or '无'}"
+                f"{idx}. {repo.repo}｜分支：{branches}｜作者：{authors}｜事件：{'/'.join(events) or '无'}｜通知：{targets_label}"
             )
         return "\n".join(lines)
 

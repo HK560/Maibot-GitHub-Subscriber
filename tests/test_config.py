@@ -28,6 +28,9 @@ class ConfigModelTest(unittest.TestCase):
         # 默认托管一个占位仓库条目，便于新装用户填写
         self.assertEqual(len(cfg.subscriptions.repos), 1)
         self.assertEqual(cfg.subscriptions.repos[0].repo, "")
+        self.assertFalse(cfg.subscriptions.repos[0].use_custom_targets)
+        self.assertEqual(cfg.subscriptions.repos[0].group_targets, [])
+        self.assertEqual(cfg.subscriptions.repos[0].private_targets, [])
 
     def test_repo_normalization(self) -> None:
         Repo = config_mod.RepoSubscription
@@ -80,6 +83,55 @@ class ConfigModelTest(unittest.TestCase):
         self.assertEqual(n.group_targets, ["123456789"])
         self.assertFalse(hasattr(n, "private_whitelist"))
 
+    def test_repo_targets_inherit_global_by_default(self) -> None:
+        cfg = self.Cfg(
+            notify={"group_targets": ["123456789"], "private_targets": ["11111111"]},
+            subscriptions={"repos": [{"repo": "a/b"}]},
+        )
+        repo = cfg.subscriptions.repos[0]
+        self.assertEqual(cfg.notify_targets_for(repo), (["123456789"], ["11111111"]))
+        self.assertEqual(cfg.all_notify_targets(), (["123456789"], ["11111111"]))
+        self.assertEqual(cfg.custom_target_repos(), [])
+
+    def test_repo_targets_can_override_global(self) -> None:
+        cfg = self.Cfg(
+            notify={"group_targets": ["123456789"], "private_targets": ["11111111"]},
+            subscriptions={"repos": [
+                {"repo": "a/b"},
+                {"repo": "c/d", "use_custom_targets": True,
+                 "group_targets": ["222222222"], "private_targets": ["22222222"]},
+                {"repo": "e/f", "use_custom_targets": True},
+                {"repo": "g/h", "group_targets": ["333333333"], "private_targets": ["33333333"]},
+            ]},
+        )
+        repos = {repo.repo: repo for repo in cfg.subscriptions.repos}
+        self.assertEqual(cfg.notify_targets_for(repos["a/b"]), (["123456789"], ["11111111"]))
+        self.assertEqual(cfg.notify_targets_for(repos["c/d"]), (["222222222"], ["22222222"]))
+        # 单独配置后留空表示该仓库不发送，而不是回退全局
+        self.assertEqual(cfg.notify_targets_for(repos["e/f"]), ([], []))
+        # 未开启开关时，行内填写的目标不生效，仍然继承全局
+        self.assertEqual(cfg.notify_targets_for(repos["g/h"]), (["123456789"], ["11111111"]))
+        self.assertEqual(
+            cfg.all_notify_targets(),
+            (["123456789", "222222222"], ["11111111", "22222222"]),
+        )
+        self.assertEqual([repo.repo for repo in cfg.custom_target_repos()], ["c/d", "e/f"])
+
+    def test_repo_target_lists_validated_and_deduped(self) -> None:
+        Repo = config_mod.RepoSubscription
+        repo = Repo(
+            repo="a/b",
+            use_custom_targets=True,
+            group_targets=["123456789", "123456789", " "],
+            private_targets=["12345678", "12345678"],
+        )
+        self.assertEqual(repo.group_targets, ["123456789"])
+        self.assertEqual(repo.private_targets, ["12345678"])
+        with self.assertRaises(ValueError):
+            Repo(repo="a/b", use_custom_targets=True, group_targets=["123"])
+        with self.assertRaises(ValueError):
+            Repo(repo="a/b", use_custom_targets=True, private_targets=["abc"])
+
     def test_timezone_validation(self) -> None:
         with self.assertRaises(ValueError):
             self.Cfg(plugin={"timezone": "Mars/Olympus"})
@@ -98,7 +150,7 @@ class ConfigModelTest(unittest.TestCase):
     @unittest.skipIf(build_plugin_default_config is None, "maibot_sdk 不可用")
     def test_default_config_and_schema(self) -> None:
         defaults = build_plugin_default_config(self.Cfg)
-        self.assertEqual(defaults["plugin"]["config_version"], "1.1.0")
+        self.assertEqual(defaults["plugin"]["config_version"], "1.2.0")
         schema = generate_plugin_config_schema(self.Cfg)
         sections = schema["sections"]
         for name in ["plugin", "github", "subscriptions", "notify", "polling", "filters", "template", "advanced"]:
@@ -107,8 +159,13 @@ class ConfigModelTest(unittest.TestCase):
         self.assertEqual(repos_field["type"], "array")
         self.assertEqual(repos_field["item_type"], "object")
         for field in ["repo", "branches", "authors", "watch_commits", "watch_releases",
-                      "watch_issues", "watch_prs", "watch_tags"]:
+                      "watch_issues", "watch_prs", "watch_tags",
+                      "use_custom_targets", "group_targets", "private_targets"]:
             self.assertIn(field, repos_field["item_fields"])
+        item_fields = repos_field["item_fields"]
+        self.assertEqual(item_fields["use_custom_targets"]["type"], "boolean")
+        self.assertEqual(item_fields["group_targets"]["type"], "array")
+        self.assertEqual(item_fields["private_targets"]["type"], "array")
         self.assertEqual(repos_field["item_fields"]["issue_state"]["choices"], ["all", "open"])
 
     def test_multiple_notification_targets_use_supported_list_widget(self):

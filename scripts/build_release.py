@@ -7,13 +7,13 @@ ROOT = Path(__file__).resolve().parents[1]
 FILES = (
     "_manifest.json", "__init__.py", "plugin.py", "config.py", "client.py",
     "engine.py", "notify.py", "state.py", "models.py", "config.example.toml",
-    "requirements.txt", "pyproject.toml", "README.md", "LICENSE",
+    "requirements.txt", "pyproject.toml", "README.md", "CHANGELOG.md", "LICENSE",
 )
 
 
 def build() -> Path:
     manifest = json.loads((ROOT / "_manifest.json").read_text(encoding="utf-8"))
-    destination = ROOT / "dist" / f"mai-github-sub-v{manifest['version']}.zip"
+    destination = ROOT / "dist" / f"maibot-github-subscriber-v{manifest['version']}.zip"
     destination.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as archive:
         for name in FILES:

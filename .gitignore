@@ -1,12 +1,17 @@
 __pycache__/
 *.py[cod]
+*.egg-info/
 .venv/
 venv/
 data/
 temp/
 .pytest_cache/
 .ruff_cache/
+.idea/
+.vscode/
+.DS_Store
 *.log
+*.zip
 config.local.toml
 state.json
 config.toml

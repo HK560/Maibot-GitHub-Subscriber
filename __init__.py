@@ -1,1 +1,1 @@
-"""GitHub 仓库订阅通知插件。"""
+"""MaiBot GitHub Subscriber 插件。"""

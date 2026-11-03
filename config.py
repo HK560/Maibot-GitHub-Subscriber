@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import re
-from typing import List, Literal
+from typing import List, Literal, Tuple
 
 from maibot_sdk import Field, PluginConfigBase
 from pydantic import field_validator, model_validator
@@ -45,6 +45,32 @@ def _dedupe(items: List[str]) -> List[str]:
     return seen
 
 
+def _clean_group_targets(values: List[str]) -> List[str]:
+    result: List[str] = []
+    for raw in values:
+        group = str(raw).strip()
+        if not group:
+            continue
+        if not _GROUP_PATTERN.match(group):
+            raise ValueError(f"QQ 群号应为 5～12 位数字：{raw}")
+        if group not in result:
+            result.append(group)
+    return result
+
+
+def _clean_private_targets(values: List[str]) -> List[str]:
+    result: List[str] = []
+    for raw in values:
+        user = str(raw).strip()
+        if not user:
+            continue
+        if not _USER_PATTERN.match(user):
+            raise ValueError(f"QQ 号应为 4～15 位数字：{raw}")
+        if user not in result:
+            result.append(user)
+    return result
+
+
 class PluginSection(PluginConfigBase):
     """插件总开关、管理员与配置版本。"""
 
@@ -61,7 +87,7 @@ class PluginSection(PluginConfigBase):
         },
     )
     config_version: str = Field(
-        default="1.1.0",
+        default="1.2.0",
         description="插件自动维护的配置格式版本",
         json_schema_extra={
             "label": "配置格式版本（无需修改）",
@@ -275,6 +301,31 @@ class RepoSubscription(PluginConfigBase):
             "x-widget": "list",
         },
     )
+    use_custom_targets: bool = Field(
+        default=False,
+        description="是否为该仓库单独指定通知群聊与私聊；关闭时继承全局通知目标",
+        json_schema_extra={
+            "label": "单独配置通知目标（关闭时继承全局）",
+        },
+    )
+    group_targets: List[str] = Field(
+        default_factory=list,
+        description="该仓库单独发送通知的群号列表，仅在开启单独配置后生效",
+        json_schema_extra={
+            "label": "本仓库群聊（开启“单独配置”后生效，留空不发群）",
+            "placeholder": "123456789",
+            "x-widget": "list",
+        },
+    )
+    private_targets: List[str] = Field(
+        default_factory=list,
+        description="该仓库单独发送通知的私聊号列表，仅在开启单独配置后生效",
+        json_schema_extra={
+            "label": "本仓库私聊（开启“单独配置”后生效，留空不发私聊）",
+            "placeholder": "12345678",
+            "x-widget": "list",
+        },
+    )
     note: str = Field(
         default="",
         description="备注，仅用于配置页备忘",
@@ -284,6 +335,13 @@ class RepoSubscription(PluginConfigBase):
             "placeholder": "例如：主程序仓库",
         },
     )
+
+    def resolve_targets(self, notify: "NotifySection") -> Tuple[List[str], List[str]]:
+        """返回该仓库生效的 (群聊, 私聊) 目标；未开启单独配置时继承全局。"""
+
+        if self.use_custom_targets:
+            return list(self.group_targets), list(self.private_targets)
+        return list(notify.group_targets), list(notify.private_targets)
 
     @model_validator(mode="after")
     def _branch_repository(self) -> "RepoSubscription":
@@ -309,6 +367,16 @@ class RepoSubscription(PluginConfigBase):
     @classmethod
     def _clean_keywords(cls, values: List[str]) -> List[str]:
         return [item for item in _dedupe(values) if item]
+
+    @field_validator("group_targets")
+    @classmethod
+    def _validate_groups(cls, values: List[str]) -> List[str]:
+        return _clean_group_targets(values)
+
+    @field_validator("private_targets")
+    @classmethod
+    def _validate_users(cls, values: List[str]) -> List[str]:
+        return _clean_private_targets(values)
 
 
 class SubscriptionsSection(PluginConfigBase):
@@ -417,30 +485,12 @@ class NotifySection(PluginConfigBase):
     @field_validator("group_targets")
     @classmethod
     def _validate_groups(cls, values: List[str]) -> List[str]:
-        result: List[str] = []
-        for raw in values:
-            group = str(raw).strip()
-            if not group:
-                continue
-            if not _GROUP_PATTERN.match(group):
-                raise ValueError(f"QQ 群号应为 5～12 位数字：{raw}")
-            if group not in result:
-                result.append(group)
-        return result
+        return _clean_group_targets(values)
 
     @field_validator("private_targets")
     @classmethod
     def _validate_users(cls, values: List[str]) -> List[str]:
-        result: List[str] = []
-        for raw in values:
-            user = str(raw).strip()
-            if not user:
-                continue
-            if not _USER_PATTERN.match(user):
-                raise ValueError(f"QQ 号应为 4～15 位数字：{raw}")
-            if user not in result:
-                result.append(user)
-        return result
+        return _clean_private_targets(values)
 
 
 class PollingSection(PluginConfigBase):
@@ -616,12 +666,12 @@ class TemplateSection(PluginConfigBase):
         },
     )
     footer_text: str = Field(
-        default="— MaiBot GitHub 订阅",
+        default="— MaiBot GitHub Subscriber",
         description="通知末尾的落款，留空则不显示",
         json_schema_extra={
             "label": "落款",
             "hint": "每条通知末尾附加的文字，留空不显示。",
-            "placeholder": "— MaiBot GitHub 订阅",
+            "placeholder": "— MaiBot GitHub Subscriber",
         },
     )
 
@@ -665,7 +715,7 @@ class AdvancedSection(PluginConfigBase):
 
 
 class GithubSubConfig(PluginConfigBase):
-    """GitHub 订阅通知插件配置。"""
+    """MaiBot GitHub Subscriber 插件配置。"""
 
     plugin: PluginSection = Field(default_factory=PluginSection)
     github: GitHubSection = Field(default_factory=GitHubSection)
@@ -675,6 +725,33 @@ class GithubSubConfig(PluginConfigBase):
     filters: FiltersSection = Field(default_factory=FiltersSection)
     template: TemplateSection = Field(default_factory=TemplateSection)
     advanced: AdvancedSection = Field(default_factory=AdvancedSection)
+
+    def notify_targets_for(self, repo: RepoSubscription) -> Tuple[List[str], List[str]]:
+        """返回指定仓库实际使用的 (群聊, 私聊) 目标。"""
+
+        return repo.resolve_targets(self.notify)
+
+    def custom_target_repos(self) -> List[RepoSubscription]:
+        """返回启用了仓库级通知目标的已订阅仓库。"""
+
+        return [
+            repo
+            for repo in self.subscriptions.repos
+            if repo.enabled and repo.repo and repo.use_custom_targets
+        ]
+
+    def all_notify_targets(self) -> Tuple[List[str], List[str]]:
+        """汇总全局与所有已启用仓库实际生效的目标，用于测试消息和状态展示。"""
+
+        groups = list(self.notify.group_targets)
+        privates = list(self.notify.private_targets)
+        for repo in self.subscriptions.repos:
+            if not repo.enabled or not repo.repo:
+                continue
+            repo_groups, repo_privates = self.notify_targets_for(repo)
+            groups.extend(repo_groups)
+            privates.extend(repo_privates)
+        return list(dict.fromkeys(groups)), list(dict.fromkeys(privates))
 
     @model_validator(mode="after")
     def _validate_timezone(self) -> "GithubSubConfig":
