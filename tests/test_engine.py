@@ -167,6 +167,7 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].kind, "issue")
         self.assertEqual(events[0].action, "已关闭")
+        self.assertEqual(events[0].extra.get("number"), "1")
         # 新开 Issue
         self.client.issues = [issue(2, "open", "new bug"), issue(1, "closed")]
         events = self._poll(eng, cfg, repo)
@@ -181,6 +182,7 @@ class EngineTest(unittest.TestCase):
         events = self._poll(eng, cfg, repo)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].action, "已合并")
+        self.assertEqual(events[0].extra.get("number"), "10")
 
     def test_ignore_draft_pr(self) -> None:
         eng, cfg, repo = self._make()

@@ -31,7 +31,10 @@ class ConfigModelTest(unittest.TestCase):
         self.assertFalse(cfg.subscriptions.repos[0].use_custom_targets)
         self.assertEqual(cfg.subscriptions.repos[0].group_targets, [])
         self.assertEqual(cfg.subscriptions.repos[0].private_targets, [])
-        self.assertFalse(cfg.template.show_issue_body)
+        self.assertIn("{body}", cfg.template.commit_template)
+        self.assertIn("{body}", cfg.template.release_template)
+        self.assertNotIn("{body}", cfg.template.issue_template)
+        self.assertNotIn("{body}", cfg.template.pr_template)
 
     def test_repo_normalization(self) -> None:
         Repo = config_mod.RepoSubscription
@@ -151,7 +154,7 @@ class ConfigModelTest(unittest.TestCase):
     @unittest.skipIf(build_plugin_default_config is None, "maibot_sdk 不可用")
     def test_default_config_and_schema(self) -> None:
         defaults = build_plugin_default_config(self.Cfg)
-        self.assertEqual(defaults["plugin"]["config_version"], "1.2.0")
+        self.assertEqual(defaults["plugin"]["config_version"], "1.3.0")
         schema = generate_plugin_config_schema(self.Cfg)
         sections = schema["sections"]
         for name in ["plugin", "github", "subscriptions", "notify", "polling", "filters", "template", "advanced"]:
@@ -168,6 +171,17 @@ class ConfigModelTest(unittest.TestCase):
         self.assertEqual(item_fields["group_targets"]["type"], "array")
         self.assertEqual(item_fields["private_targets"]["type"], "array")
         self.assertEqual(repos_field["item_fields"]["issue_state"]["choices"], ["all", "open"])
+        template_fields = sections["template"]["fields"]
+        for key in ("commit_template", "release_template", "issue_template",
+                    "pr_template", "tag_template", "footer_text"):
+            self.assertIn(key, template_fields)
+        for key in ("commit_template", "release_template", "issue_template",
+                    "pr_template", "tag_template"):
+            with self.subTest(template=key):
+                self.assertEqual(template_fields[key]["type"], "string")
+                self.assertEqual(template_fields[key]["ui_type"], "textarea")
+                self.assertEqual(template_fields[key]["rows"], 8)
+                self.assertIn("{title}", template_fields[key]["default"])
 
     def test_multiple_notification_targets_use_supported_list_widget(self):
         schema = generate_plugin_config_schema(self.Cfg)

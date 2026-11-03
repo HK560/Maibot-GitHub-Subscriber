@@ -7,10 +7,13 @@
 from __future__ import annotations
 
 import re
+import string
 from typing import List, Literal, Tuple
 
 from maibot_sdk import Field, PluginConfigBase
 from pydantic import field_validator, model_validator
+
+from .models import DEFAULT_TEMPLATES
 
 _REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _GROUP_PATTERN = re.compile(r"^\d{5,12}$")
@@ -87,7 +90,7 @@ class PluginSection(PluginConfigBase):
         },
     )
     config_version: str = Field(
-        default="1.2.0",
+        default="1.3.0",
         description="插件自动维护的配置格式版本",
         json_schema_extra={
             "label": "配置格式版本（无需修改）",
@@ -630,53 +633,108 @@ class FiltersSection(PluginConfigBase):
     )
 
 
-class TemplateSection(PluginConfigBase):
-    """通知消息外观与内容。"""
+_TEMPLATE_COMMON_HINT = (
+    "通用占位符：{emoji}、{header}、{repo}、{repo_owner}、{repo_name}、{kind}、"
+    "{kind_label}、{title}、{body}、{author}、{action}、{branch}、{time}、"
+    "{meta}、{url}、{key}、{footer}。留空使用内置默认模板；未知占位符原样保留；"
+    "字面量花括号写成 {{ 或 }}。"
+)
 
-    __ui_label__ = "消息样式"
+
+class TemplateSection(PluginConfigBase):
+    """每类事件使用独立消息模板，可直接在面板中修改。
+
+    通用占位符：{emoji}、{header}、{repo}、{repo_owner}、{repo_name}、{kind}、
+    {kind_label}、{title}、{body}、{author}、{action}、{branch}、{time}、
+    {meta}、{url}、{key}、{footer}。
+
+    类型专用：提交 {branch}、{sha}；Release {tag}、{action}；
+    Issue/PR {number}、{action}；Tag {tag}。
+
+    模板留空时使用内置默认模板；未知占位符原样保留；字面量花括号写成 {{ 和 }}。
+    """
+
+    __ui_label__ = "消息模板"
     __ui_icon__ = "message"
     __ui_order__ = 6
 
-    show_commit_body: bool = Field(
-        default=True,
-        description="提交通知中是否展示提交信息",
-        json_schema_extra={"label": "显示提交信息"},
-    )
-    show_issue_body: bool = Field(
-        default=False,
-        description="Issue/PR 通知中是否展示正文摘要；默认关闭，只显示标题",
+    commit_template: str = Field(
+        default=DEFAULT_TEMPLATES["commit"],
+        description="Commit 通知使用的消息模板",
         json_schema_extra={
-            "label": "显示 Issue/PR 内容摘要",
-            "hint": "默认关闭，通知只显示标题。开启后会附带 Issue/PR 正文摘要，并按“正文最大长度”截断。",
+            "label": "提交消息模板",
+            "hint": _TEMPLATE_COMMON_HINT + " 本类型专用：{sha}。",
+            "x-widget": "textarea",
+            "rows": 8,
         },
     )
-    show_author: bool = Field(
-        default=True,
-        description="是否显示作者",
-        json_schema_extra={"label": "显示作者"},
-    )
-    show_repo_full_name: bool = Field(
-        default=True,
-        description="是否显示仓库完整名 owner/repo",
-        json_schema_extra={"label": "显示仓库完整名"},
-    )
-    use_emoji: bool = Field(
-        default=True,
-        description="在通知标题前使用 emoji 图标",
+    release_template: str = Field(
+        default=DEFAULT_TEMPLATES["release"],
+        description="Release 通知使用的消息模板",
         json_schema_extra={
-            "label": "使用 emoji 图标",
-            "hint": "为不同类型的通知加上 📦 提交、🚀 发布、🐞 Issue、🔀 PR、🏷️ Tag 图标，便于阅读。",
+            "label": "Release 消息模板",
+            "hint": _TEMPLATE_COMMON_HINT + " 本类型专用：{tag}。",
+            "x-widget": "textarea",
+            "rows": 8,
+        },
+    )
+    issue_template: str = Field(
+        default=DEFAULT_TEMPLATES["issue"],
+        description="Issue 通知使用的消息模板",
+        json_schema_extra={
+            "label": "Issue 消息模板",
+            "hint": _TEMPLATE_COMMON_HINT + " 本类型专用：{number}。默认模板不包含 {body}，只显示标题。",
+            "x-widget": "textarea",
+            "rows": 8,
+        },
+    )
+    pr_template: str = Field(
+        default=DEFAULT_TEMPLATES["pr"],
+        description="Pull Request 通知使用的消息模板",
+        json_schema_extra={
+            "label": "PR 消息模板",
+            "hint": _TEMPLATE_COMMON_HINT + " 本类型专用：{number}。默认模板不包含 {body}，只显示标题。",
+            "x-widget": "textarea",
+            "rows": 8,
+        },
+    )
+    tag_template: str = Field(
+        default=DEFAULT_TEMPLATES["tag"],
+        description="Tag 通知使用的消息模板",
+        json_schema_extra={
+            "label": "Tag 消息模板",
+            "hint": _TEMPLATE_COMMON_HINT + " 本类型专用：{tag}；Tag 事件通常没有作者和时间。",
+            "x-widget": "textarea",
+            "rows": 8,
         },
     )
     footer_text: str = Field(
         default="— MaiBot GitHub Subscriber",
-        description="通知末尾的落款，留空则不显示",
+        description="通知末尾的统一落款，在模板中用 {footer} 引用",
         json_schema_extra={
-            "label": "落款",
-            "hint": "每条通知末尾附加的文字，留空不显示。",
+            "label": "统一落款",
+            "hint": "在模板中使用 {footer} 才会输出；留空则不输出落款。",
             "placeholder": "— MaiBot GitHub Subscriber",
         },
     )
+
+    @field_validator(
+        "commit_template",
+        "release_template",
+        "issue_template",
+        "pr_template",
+        "tag_template",
+    )
+    @classmethod
+    def _validate_template(cls, value: str) -> str:
+        text = str(value or "")
+        if not text.strip():
+            return ""
+        try:
+            list(string.Formatter().parse(text))
+        except ValueError as exc:
+            raise ValueError("模板花括号不匹配；字面量花括号请写成 {{ 或 }}") from exc
+        return text
 
 
 class AdvancedSection(PluginConfigBase):

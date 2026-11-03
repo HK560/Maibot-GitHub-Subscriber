@@ -288,9 +288,9 @@ class FormatTest(unittest.TestCase):
 
     def test_issue_pr_body_hidden_by_default(self) -> None:
         cfg = config_mod.GithubSubConfig()
-        self.assertFalse(cfg.template.show_issue_body)
         for kind in ("issue", "pr"):
             with self.subTest(kind=kind):
+                self.assertNotIn("{body}", getattr(cfg.template, f"{kind}_template"))
                 event = models_mod.Event(
                     kind=kind, repo="a/b", title=f"#{kind} title", body="hidden body", url="u",
                 )
@@ -298,8 +298,11 @@ class FormatTest(unittest.TestCase):
                 self.assertIn(f"#{kind} title", text)
                 self.assertNotIn("hidden body", text)
 
-    def test_issue_pr_body_shown_when_enabled(self) -> None:
-        cfg = config_mod.GithubSubConfig(template=dict(show_issue_body=True))
+    def test_issue_pr_body_shown_when_template_includes_body(self) -> None:
+        cfg = config_mod.GithubSubConfig(template=dict(
+            issue_template="{title}\n{body}",
+            pr_template="{title}\n{body}",
+        ))
         for kind in ("issue", "pr"):
             with self.subTest(kind=kind):
                 event = models_mod.Event(
@@ -307,6 +310,73 @@ class FormatTest(unittest.TestCase):
                 )
                 text = models_mod.format_event(event, config=cfg)
                 self.assertIn("visible body", text)
+
+    def test_commit_template_placeholders(self) -> None:
+        cfg = config_mod.GithubSubConfig(template=dict(
+            footer_text="FOOT",
+            commit_template=(
+                "{header}|{repo}|{repo_owner}|{repo_name}|{kind}|{kind_label}|{emoji}|"
+                "{title}|{author}|{action}|{branch}|{time}|{meta}|{url}|{key}|{sha}|{footer}"
+            ),
+        ))
+        event = models_mod.Event(
+            kind="commit", repo="owner/repo", title="fix bug", body="body",
+            author="alice", event_time="2026-01-01T00:00:00Z",
+            url="https://example/commit/abc", key="abc", extra={"branch": "dev"},
+        )
+        text = models_mod.format_event(event, config=cfg)
+        for expected in (
+            "📦【新提交】owner/repo", "owner/repo", "owner", "repo", "新提交", "📦",
+            "fix bug", "alice", "dev", "2026-01-01", "作者：alice", "分支：dev",
+            "https://example/commit/abc", "abc", "FOOT",
+        ):
+            self.assertIn(expected, text)
+
+    def test_type_specific_placeholders(self) -> None:
+        cfg = config_mod.GithubSubConfig(template=dict(
+            release_template="{tag}|{action}|{title}",
+            issue_template="{number}|{action}|{title}",
+            pr_template="{number}|{action}|{title}",
+            tag_template="{tag}|{kind_label}|{title}",
+        ))
+        cases = [
+            (models_mod.Event(kind="release", repo="a/b", title="v1.0.0", url="u",
+                              extra={"tag": "v1.0.0"}, action="正式发布"),
+             ["v1.0.0", "正式发布"]),
+            (models_mod.Event(kind="issue", repo="a/b", title="#12 bug", url="u",
+                              extra={"number": "12"}, action="新开"),
+             ["12|新开|#12 bug"]),
+            (models_mod.Event(kind="pr", repo="a/b", title="#7 feat", url="u",
+                              extra={"number": "7"}, action="已合并"),
+             ["7|已合并|#7 feat"]),
+            (models_mod.Event(kind="tag", repo="a/b", title="v2.0.0", url="u"),
+             ["v2.0.0|新标签|v2.0.0"]),
+        ]
+        for event, expected in cases:
+            with self.subTest(kind=event.kind):
+                text = models_mod.format_event(event, config=cfg)
+                for item in expected:
+                    self.assertIn(item, text)
+
+    def test_unknown_placeholder_and_escaped_braces(self) -> None:
+        cfg = config_mod.GithubSubConfig(template=dict(
+            commit_template="{title}|{unknown}|{{literal}}",
+        ))
+        event = models_mod.Event(kind="commit", repo="a/b", title="fix", url="u")
+        text = models_mod.format_event(event, config=cfg)
+        self.assertIn("fix|{unknown}|{literal}", text)
+
+    def test_empty_template_uses_default(self) -> None:
+        cfg = config_mod.GithubSubConfig(template=dict(commit_template="   "))
+        event = models_mod.Event(kind="commit", repo="a/b", title="fix", body="body", url="u")
+        text = models_mod.format_event(event, config=cfg)
+        self.assertIn("【新提交】a/b", text)
+        self.assertIn("fix", text)
+        self.assertIn("body", text)
+
+    def test_invalid_template_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            config_mod.GithubSubConfig(template=dict(commit_template="{title"))
 
     def test_truncate_body(self) -> None:
         cfg = config_mod.GithubSubConfig(filters=dict(max_text_length=80))

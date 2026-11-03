@@ -3,7 +3,7 @@
 
 [plugin]
 enabled = true
-config_version = "1.2.0"
+config_version = "1.3.0"
 # 可使用管理命令的账号；QQ 号可直接填写，保存时自动补全 qq:
 admin_users = []
 timezone = "Asia/Shanghai"
@@ -68,11 +68,54 @@ include_bot_authors = false
 max_text_length = 400
 
 [template]
-show_commit_body = true
-show_issue_body = false
-show_author = true
-show_repo_full_name = true
-use_emoji = true
+# 每类事件独立模板；留空使用内置默认模板。完整占位符说明见 README。
+# 通用：{emoji} {header} {repo} {repo_owner} {repo_name} {kind} {kind_label}
+#       {title} {body} {author} {action} {branch} {time} {meta} {url} {key} {footer}
+# 专用：提交 {sha}；Release {tag}；Issue/PR {number}；Tag {tag}
+commit_template = """{emoji}【{kind_label}】{repo}
+{title}
+
+{meta}
+
+{body}
+
+{url}
+
+{footer}"""
+release_template = """{emoji}【{kind_label}】{repo}
+{title}
+
+{meta}
+
+{body}
+
+{url}
+
+{footer}"""
+issue_template = """{emoji}【{kind_label}】{repo}
+{title}
+
+{meta}
+
+{url}
+
+{footer}"""
+pr_template = """{emoji}【{kind_label}】{repo}
+{title}
+
+{meta}
+
+{url}
+
+{footer}"""
+tag_template = """{emoji}【{kind_label}】{repo}
+{title}
+
+{meta}
+
+{url}
+
+{footer}"""
 footer_text = "— MaiBot GitHub Subscriber"
 
 [advanced]

@@ -710,6 +710,7 @@ class SubscriptionEngine:
             event_time=str(item.get("updated_at") or item.get("created_at") or ""),
             url=str(item.get("html_url") or ""),
             key=f"issue-{item.get('number')}-{action}",
+            extra={"number": str(item.get("number") or "")},
         )
 
     def _pr_event(
@@ -733,6 +734,7 @@ class SubscriptionEngine:
             event_time=str(item.get("updated_at") or item.get("created_at") or ""),
             url=str(item.get("html_url") or ""),
             key=f"pr-{item.get('number')}-{action}",
+            extra={"number": str(item.get("number") or "")},
         )
 
     # ------------------------------------------------------------------ 过滤
