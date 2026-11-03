@@ -1,0 +1,77 @@
+# GitHub 仓库订阅通知插件配置
+# 参考示例；复制为本地 config.toml 才会生效，也可直接使用 WebUI 自动生成的配置。
+
+[plugin]
+enabled = true
+config_version = "1.1.0"
+# 可使用管理命令的账号；QQ 号可直接填写，保存时自动补全 qq:
+admin_users = []
+timezone = "Asia/Shanghai"
+
+[github]
+# 可选：GitHub Personal Access Token（只读即可）。留空也能订阅公开仓库，但速率限制为 60 次/小时
+token = ""
+api_base_url = "https://api.github.com"
+proxy = ""
+verify_ssl = true
+per_page = 15
+request_timeout_seconds = 15
+
+# 订阅仓库列表。可添加多个 [[subscriptions.repos]] 块
+[[subscriptions.repos]]
+repo = "Mai-with-u/MaiBot"
+enabled = true
+branches = ["main"]
+authors = []
+watch_commits = true
+watch_releases = true
+watch_issues = true
+watch_prs = true
+watch_tags = false
+issue_state = "all"
+notify_issue_close = true
+notify_pr_merge = true
+ignore_keywords = []
+note = "麦麦主程序仓库（示例，可按需删除或修改）"
+
+[notify]
+platform = "qq"
+account_id = ""
+scope = ""
+# 接收通知的 QQ 群号（麦麦需已在群内）
+group_targets = []
+# 接收通知的私聊 QQ 号
+private_targets = []
+notify_on_first_run = false
+startup_delay_seconds = 20
+send_as_forward = false
+
+[polling]
+interval_seconds = 300
+jitter_seconds = 15
+max_events_per_repo_per_run = 5
+max_concurrent_repos = 3
+error_backoff_seconds = 120
+first_run_lookback_hours = 72
+state_retention_days = 30
+
+[filters]
+ignore_authors = ["dependabot[bot]", "github-actions[bot]", "renovate[bot]"]
+ignore_keywords = []
+ignore_drafts = true
+include_bot_authors = false
+max_text_length = 400
+
+[template]
+show_commit_body = true
+show_issue_body = true
+show_author = true
+show_repo_full_name = true
+use_emoji = true
+footer_text = "— MaiBot GitHub 订阅"
+
+[advanced]
+log_level = "INFO"
+persist_state = true
+dry_run = false
+test_command_enabled = true

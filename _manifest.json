@@ -1,0 +1,54 @@
+{
+  "manifest_version": 2,
+  "id": "mai.github-sub",
+  "name": "GitHub 仓库订阅通知",
+  "version": "1.1.0",
+  "description": "订阅多个 GitHub 仓库的提交、Release、Issues、Pull Request 与标签变化，按分支和作者筛选后推送到手动填写的群聊或私聊，并提供丰富的可视化配置。",
+  "author": {
+    "name": "mai-github-sub contributors",
+    "url": "https://github.com/OWNER"
+  },
+  "license": "MIT",
+  "urls": {
+    "repository": "https://github.com/OWNER/mai-github-sub",
+    "homepage": "https://github.com/OWNER/mai-github-sub",
+    "documentation": "https://github.com/OWNER/mai-github-sub#readme",
+    "issues": "https://github.com/OWNER/mai-github-sub/issues"
+  },
+  "host_application": {
+    "min_version": "1.3.17",
+    "max_version": "1.3.99"
+  },
+  "sdk": {
+    "min_version": "2.19.0",
+    "max_version": "2.98.99"
+  },
+  "dependencies": [
+    {
+      "type": "python_package",
+      "name": "httpx",
+      "version_spec": ">=0.27,<1"
+    }
+  ],
+  "capabilities": [
+    "send.text",
+    "send.forward",
+    "chat.get_group_streams",
+    "chat.get_private_streams"
+  ],
+  "i18n": {
+    "default_locale": "zh-CN",
+    "supported_locales": [
+      "zh-CN"
+    ]
+  },
+  "plugin_type": "integration",
+  "display": {
+    "icon": {
+      "type": "lucide",
+      "value": "github",
+      "fallback": "git-branch",
+      "background": "#0D1117"
+    }
+  }
+}

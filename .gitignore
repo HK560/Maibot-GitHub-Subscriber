@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+data/
+temp/
+.pytest_cache/
+.ruff_cache/
+*.log
+config.local.toml
+state.json
+config.toml
+.maibot-release.json
+logs/
+dist/
+artifacts/
